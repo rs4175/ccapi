@@ -2,7 +2,8 @@
 
 #include "boost/asio/ssl.hpp"
 #include "ccapi_cpp/ccapi_logger.h"
-#include <mutex>
+#include <atomic>
+#include <cstdint>
 #include <string>
 
 namespace ccapi {
@@ -16,19 +17,20 @@ class ServiceContext {
     ASIO,
     DPDK
   };
+  // Snapshot returned by getNetworkMetricsSnapshot(); not used for live storage.
   struct NetworkMetrics {
     std::string activeNetworkStack{"ASIO"};
     bool dpdkRequested{};
     bool dpdkActive{};
-    long dpdkFallbackCount{};
-    long wsBytesSent{};
-    long wsBytesReceived{};
-    long httpBytesSent{};
-    long httpBytesReceived{};
-    long wsConnectCount{};
-    long wsConnectFailureCount{};
-    long httpRequestCount{};
-    long httpRequestFailureCount{};
+    int64_t dpdkFallbackCount{};
+    int64_t wsBytesSent{};
+    int64_t wsBytesReceived{};
+    int64_t httpBytesSent{};
+    int64_t httpBytesReceived{};
+    int64_t wsConnectCount{};
+    int64_t wsConnectFailureCount{};
+    int64_t httpRequestCount{};
+    int64_t httpRequestFailureCount{};
   };
   typedef boost::asio::io_context IoContext;
   typedef boost::asio::io_context* IoContextPtr;
@@ -96,87 +98,84 @@ class ServiceContext {
     }
   }
 
+  // Called from Session::start() before the I/O thread is running; no concurrency at this point.
   void initializeNetworkStack(const std::string& configuredNetworkStack) {
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.dpdkRequested = configuredNetworkStack == "DPDK";
-    if (configuredNetworkStack == "DPDK") {
+    this->networkStack = NetworkStack::ASIO;
+    this->networkMetricsDpdkActive.store(false, std::memory_order_relaxed);
+    bool isDpdk = (configuredNetworkStack == "DPDK");
+    this->networkMetricsDpdkRequested.store(isDpdk, std::memory_order_relaxed);
+    if (isDpdk) {
       // NOTE: this repository currently uses Boost.Asio/Beast sockets. DPDK integration requires a dedicated userspace NIC path.
       // We intentionally keep API compatibility by falling back to ASIO when DPDK is not compiled in.
-      this->networkStack = NetworkStack::ASIO;
-      this->networkMetrics.dpdkActive = false;
-      this->networkMetrics.dpdkFallbackCount += 1;
-      this->networkMetrics.activeNetworkStack = "ASIO";
+      // Increment only on the first DPDK request (not on every session restart).
+      if (this->networkMetricsDpdkFallbackCount.load(std::memory_order_relaxed) == 0) {
+        this->networkMetricsDpdkFallbackCount.fetch_add(1, std::memory_order_relaxed);
+      }
       CCAPI_LOGGER_WARN("sessionOptions.networkStack=DPDK requested but DPDK backend is not enabled in this build; falling back to ASIO");
-    } else {
-      this->networkStack = NetworkStack::ASIO;
-      this->networkMetrics.dpdkActive = false;
-      this->networkMetrics.activeNetworkStack = "ASIO";
     }
   }
   void setNetworkMetricsEnabled(bool enabled) {
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetricsEnabled = enabled;
+    this->networkMetricsEnabled.store(enabled, std::memory_order_relaxed);
   }
 
   void addWsBytesSent(std::size_t n) {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsWsBytesSent.fetch_add(static_cast<int64_t>(n), std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.wsBytesSent += static_cast<long>(n);
   }
   void addWsBytesReceived(std::size_t n) {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsWsBytesReceived.fetch_add(static_cast<int64_t>(n), std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.wsBytesReceived += static_cast<long>(n);
   }
   void addHttpBytesSent(std::size_t n) {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsHttpBytesSent.fetch_add(static_cast<int64_t>(n), std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.httpBytesSent += static_cast<long>(n);
   }
   void addHttpBytesReceived(std::size_t n) {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsHttpBytesReceived.fetch_add(static_cast<int64_t>(n), std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.httpBytesReceived += static_cast<long>(n);
   }
   void incrementWsConnectCount() {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsWsConnectCount.fetch_add(1, std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.wsConnectCount += 1;
   }
   void incrementWsConnectFailureCount() {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsWsConnectFailureCount.fetch_add(1, std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.wsConnectFailureCount += 1;
   }
   void incrementHttpRequestCount() {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsHttpRequestCount.fetch_add(1, std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.httpRequestCount += 1;
   }
   void incrementHttpRequestFailureCount() {
-    if (!this->networkMetricsEnabled) {
-      return;
+    if (this->networkMetricsEnabled.load(std::memory_order_relaxed)) {
+      this->networkMetricsHttpRequestFailureCount.fetch_add(1, std::memory_order_relaxed);
     }
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    this->networkMetrics.httpRequestFailureCount += 1;
   }
+
+  // Lock-free snapshot: individual atomic loads; each counter is independently consistent.
+  // Sufficient for monitoring; does not provide a globally consistent point-in-time view.
   NetworkMetrics getNetworkMetricsSnapshot() const {
-    std::lock_guard<std::mutex> lock(this->networkMetricsMutex);
-    return this->networkMetrics;
+    NetworkMetrics m;
+    m.activeNetworkStack = this->networkStack == NetworkStack::DPDK ? "DPDK" : "ASIO";
+    m.dpdkRequested = this->networkMetricsDpdkRequested.load(std::memory_order_relaxed);
+    m.dpdkActive = this->networkMetricsDpdkActive.load(std::memory_order_relaxed);
+    m.dpdkFallbackCount = this->networkMetricsDpdkFallbackCount.load(std::memory_order_relaxed);
+    m.wsBytesSent = this->networkMetricsWsBytesSent.load(std::memory_order_relaxed);
+    m.wsBytesReceived = this->networkMetricsWsBytesReceived.load(std::memory_order_relaxed);
+    m.httpBytesSent = this->networkMetricsHttpBytesSent.load(std::memory_order_relaxed);
+    m.httpBytesReceived = this->networkMetricsHttpBytesReceived.load(std::memory_order_relaxed);
+    m.wsConnectCount = this->networkMetricsWsConnectCount.load(std::memory_order_relaxed);
+    m.wsConnectFailureCount = this->networkMetricsWsConnectFailureCount.load(std::memory_order_relaxed);
+    m.httpRequestCount = this->networkMetricsHttpRequestCount.load(std::memory_order_relaxed);
+    m.httpRequestFailureCount = this->networkMetricsHttpRequestFailureCount.load(std::memory_order_relaxed);
+    return m;
   }
 
   void stop() {
@@ -194,9 +193,22 @@ class ServiceContext {
   bool useInternalSslContextPtr{};
   std::thread thread;
   NetworkStack networkStack{NetworkStack::ASIO};
-  bool networkMetricsEnabled{true};
-  mutable std::mutex networkMetricsMutex;
-  NetworkMetrics networkMetrics;
+
+  // Guard flag: atomic bool, read on every I/O callback (hot path).
+  std::atomic<bool> networkMetricsEnabled{false};
+
+  // Atomic counters: written on every send/receive (hot path); no mutex needed.
+  std::atomic<bool>    networkMetricsDpdkRequested{false};
+  std::atomic<bool>    networkMetricsDpdkActive{false};
+  std::atomic<int64_t> networkMetricsDpdkFallbackCount{0};
+  std::atomic<int64_t> networkMetricsWsBytesSent{0};
+  std::atomic<int64_t> networkMetricsWsBytesReceived{0};
+  std::atomic<int64_t> networkMetricsHttpBytesSent{0};
+  std::atomic<int64_t> networkMetricsHttpBytesReceived{0};
+  std::atomic<int64_t> networkMetricsWsConnectCount{0};
+  std::atomic<int64_t> networkMetricsWsConnectFailureCount{0};
+  std::atomic<int64_t> networkMetricsHttpRequestCount{0};
+  std::atomic<int64_t> networkMetricsHttpRequestFailureCount{0};
 };
 
 } /* namespace ccapi */

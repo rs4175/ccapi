@@ -69,7 +69,7 @@ class SessionOptions {
    * - "DPDK": request DPDK kernel bypass. If unavailable at runtime, ccapi falls back to ASIO without breaking API behavior.
    */
   std::string networkStack{"ASIO"};
-  bool enableNetworkMetrics{true};
+  bool enableNetworkMetrics{false};  // opt-in; avoids any overhead on the hot I/O path by default
 };
 
 } /* namespace ccapi */
