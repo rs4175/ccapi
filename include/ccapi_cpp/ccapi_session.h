@@ -299,6 +299,8 @@ class Session {
 
   virtual void start() {
     CCAPI_LOGGER_FUNCTION_ENTER;
+    this->serviceContextPtr->initializeNetworkStack(this->sessionOptions.networkStack);
+    this->serviceContextPtr->setNetworkMetricsEnabled(this->sessionOptions.enableNetworkMetrics);
     if (this->useInternalServiceContextPtr) {
       this->serviceContextPtr->start();
     }
@@ -622,6 +624,24 @@ class Session {
     if (this->useInternalServiceContextPtr) {
       this->serviceContextPtr->stop();
     }
+  }
+
+  std::map<std::string, std::string> getNetworkMetrics() const {
+    const auto snapshot = this->serviceContextPtr->getNetworkMetricsSnapshot();
+    return {
+        {"activeNetworkStack", snapshot.activeNetworkStack},
+        {"dpdkRequested", ccapi::toString(snapshot.dpdkRequested)},
+        {"dpdkActive", ccapi::toString(snapshot.dpdkActive)},
+        {"dpdkFallbackCount", ccapi::toString(snapshot.dpdkFallbackCount)},
+        {"wsBytesSent", ccapi::toString(snapshot.wsBytesSent)},
+        {"wsBytesReceived", ccapi::toString(snapshot.wsBytesReceived)},
+        {"httpBytesSent", ccapi::toString(snapshot.httpBytesSent)},
+        {"httpBytesReceived", ccapi::toString(snapshot.httpBytesReceived)},
+        {"wsConnectCount", ccapi::toString(snapshot.wsConnectCount)},
+        {"wsConnectFailureCount", ccapi::toString(snapshot.wsConnectFailureCount)},
+        {"httpRequestCount", ccapi::toString(snapshot.httpRequestCount)},
+        {"httpRequestFailureCount", ccapi::toString(snapshot.httpRequestFailureCount)},
+    };
   }
 
   typedef boost::system::error_code ErrorCode;

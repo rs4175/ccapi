@@ -481,9 +481,10 @@ class Service : public std::enable_shared_from_this<Service> {
                std::function<void(const beast::error_code&)> errorHandler, std::function<void(const http::response<http::string_body>&)> responseHandler,
                beast::error_code ec, std::size_t bytes_transferred) {
     CCAPI_LOGGER_TRACE("async_write callback start");
-    boost::ignore_unused(bytes_transferred);
+    this->serviceContextPtr->addHttpBytesSent(bytes_transferred);
     if (ec) {
       CCAPI_LOGGER_TRACE("fail");
+      this->serviceContextPtr->incrementHttpRequestFailureCount();
       errorHandler(ec);
       return;
     }
@@ -503,9 +504,10 @@ class Service : public std::enable_shared_from_this<Service> {
               std::function<void(const http::response<http::string_body>&)> responseHandler, beast::error_code ec, std::size_t bytes_transferred) {
     CCAPI_LOGGER_TRACE("async_read callback start");
     auto resPtr = &resParserPtr->get();
-    boost::ignore_unused(bytes_transferred);
+    this->serviceContextPtr->addHttpBytesReceived(bytes_transferred);
     if (ec) {
       CCAPI_LOGGER_TRACE("fail");
+      this->serviceContextPtr->incrementHttpRequestFailureCount();
       errorHandler(ec);
       return;
     }
@@ -695,9 +697,10 @@ class Service : public std::enable_shared_from_this<Service> {
   void onWrite_2(std::shared_ptr<HttpConnection> httpConnectionPtr, Request request, std::shared_ptr<http::request<http::string_body>> reqPtr, HttpRetry retry,
                  Queue<Event>* eventQueuePtr, beast::error_code ec, std::size_t bytes_transferred) {
     CCAPI_LOGGER_TRACE("async_write callback start");
-    boost::ignore_unused(bytes_transferred);
+    this->serviceContextPtr->addHttpBytesSent(bytes_transferred);
     if (ec) {
       CCAPI_LOGGER_TRACE("fail");
+      this->serviceContextPtr->incrementHttpRequestFailureCount();
       this->onError(Event::Type::REQUEST_STATUS, Message::Type::REQUEST_FAILURE, ec, "write", {request.getCorrelationId()}, eventQueuePtr);
       this->httpConnectionPool[request.getLocalIpAddress()][request.getBaseUrl()].clear();
       auto now = UtilTime::now();
@@ -724,9 +727,10 @@ class Service : public std::enable_shared_from_this<Service> {
     CCAPI_LOGGER_TRACE("local endpoint has address " + beast::get_lowest_layer(*httpConnectionPtr->streamPtr).socket().local_endpoint().address().to_string());
     auto resPtr = &resParserPtr->get();
     auto now = UtilTime::now();
-    boost::ignore_unused(bytes_transferred);
+    this->serviceContextPtr->addHttpBytesReceived(bytes_transferred);
     if (ec) {
       CCAPI_LOGGER_TRACE("fail");
+      this->serviceContextPtr->incrementHttpRequestFailureCount();
       this->onError(Event::Type::REQUEST_STATUS, Message::Type::REQUEST_FAILURE, ec, "read", {request.getCorrelationId()}, eventQueuePtr);
       this->httpConnectionPool[request.getLocalIpAddress()][request.getBaseUrl()].clear();
       auto now = UtilTime::now();
@@ -823,6 +827,9 @@ class Service : public std::enable_shared_from_this<Service> {
 
   void tryRequest(const Request& request, http::request<http::string_body>& req, const HttpRetry& retry, Queue<Event>* eventQueuePtr) {
     CCAPI_LOGGER_FUNCTION_ENTER;
+    if (retry.numRetry == 0 && retry.numRedirect == 0) {
+      this->serviceContextPtr->incrementHttpRequestCount();
+    }
 #if defined(CCAPI_ENABLE_LOG_DEBUG) || defined(CCAPI_ENABLE_LOG_TRACE)
     std::ostringstream oss;
     oss << req;
@@ -1004,6 +1011,7 @@ class Service : public std::enable_shared_from_this<Service> {
                    tcp::resolver::results_type tcpNewResolverResultsWs) {
     if (ec) {
       CCAPI_LOGGER_TRACE("dns resolve fail");
+      this->serviceContextPtr->incrementWsConnectFailureCount();
       this->onFail(wsConnectionPtr);
       return;
     }
@@ -1043,6 +1051,7 @@ class Service : public std::enable_shared_from_this<Service> {
     CCAPI_LOGGER_TRACE("async_connect callback start");
     if (ec) {
       CCAPI_LOGGER_TRACE("fail");
+      this->serviceContextPtr->incrementWsConnectFailureCount();
       this->onFail(wsConnectionPtr);
       return;
     }
@@ -1083,6 +1092,7 @@ class Service : public std::enable_shared_from_this<Service> {
     CCAPI_LOGGER_TRACE("ssl async_handshake callback start");
     if (ec) {
       CCAPI_LOGGER_TRACE("ssl handshake fail");
+      this->serviceContextPtr->incrementWsConnectFailureCount();
       this->onFail(wsConnectionPtr);
       return;
     }
@@ -1116,6 +1126,7 @@ class Service : public std::enable_shared_from_this<Service> {
     CCAPI_LOGGER_TRACE("ws async_handshake callback start");
     if (ec) {
       CCAPI_LOGGER_TRACE("ws handshake fail");
+      this->serviceContextPtr->incrementWsConnectFailureCount();
       this->onFail(wsConnectionPtr);
       return;
     }
@@ -1123,6 +1134,7 @@ class Service : public std::enable_shared_from_this<Service> {
 
     // Finalize connection setup
     this->onOpen(wsConnectionPtr);
+    this->serviceContextPtr->incrementWsConnectCount();
     this->wsConnectionPtrByIdMap.insert({wsConnectionPtr->id, wsConnectionPtr});
     CCAPI_LOGGER_TRACE("about to start read");
 
@@ -1183,6 +1195,7 @@ class Service : public std::enable_shared_from_this<Service> {
       this->onFail(wsConnectionPtr);
       return;
     }
+    this->serviceContextPtr->addWsBytesReceived(n);
     if (wsConnectionPtr->status != WsConnection::Status::OPEN) {
       CCAPI_LOGGER_WARN("should not process remaining message on closing");
       readMessageBuffer.consume(readMessageBuffer.size());
@@ -1290,6 +1303,7 @@ class Service : public std::enable_shared_from_this<Service> {
       this->onFail(wsConnectionPtr);
       return;
     }
+    this->serviceContextPtr->addWsBytesSent(n);
     auto& writeMessageBuffer = wsConnectionPtr->writeMessageBuffer;
     auto& writeMessageBufferWrittenLength = wsConnectionPtr->writeMessageBufferWrittenLength;
     auto& writeMessageBufferBoundary = wsConnectionPtr->writeMessageBufferBoundary;

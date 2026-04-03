@@ -34,7 +34,8 @@ class SessionOptions {
                          ", httpConnectionKeepAliveTimeoutSeconds = " + ccapi::toString(httpConnectionKeepAliveTimeoutSeconds) +
                          ", enableOneHttpConnectionPerRequest = " + ccapi::toString(enableOneHttpConnectionPerRequest) +
                          ", websocketConnectTimeoutMilliseconds = " + ccapi::toString(websocketConnectTimeoutMilliseconds) +
-                         ", fixConnectTimeoutMilliseconds = " + ccapi::toString(fixConnectTimeoutMilliseconds) + "]";
+                         ", fixConnectTimeoutMilliseconds = " + ccapi::toString(fixConnectTimeoutMilliseconds) +
+                         ", networkStack = " + networkStack + ", enableNetworkMetrics = " + ccapi::toString(enableNetworkMetrics) + "]";
     return output;
   }
 
@@ -61,6 +62,14 @@ class SessionOptions {
   bool enableOneHttpConnectionPerRequest{};  // create a new http connection for each request
   long websocketConnectTimeoutMilliseconds{10000};
   long fixConnectTimeoutMilliseconds{10000};
+  /**
+   * Network stack selector for I/O.
+   * Supported values:
+   * - "ASIO" (default): Boost.Asio/Beast stack.
+   * - "DPDK": request DPDK kernel bypass. If unavailable at runtime, ccapi falls back to ASIO without breaking API behavior.
+   */
+  std::string networkStack{"ASIO"};
+  bool enableNetworkMetrics{true};
 };
 
 } /* namespace ccapi */
