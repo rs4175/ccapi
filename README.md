@@ -1077,6 +1077,32 @@ Subscription subscription("bybit", "BTCUSDT", "MARKET_DEPTH", "", "", {}, "172.3
 #### Reduce build time
 The Pimpl (Pointer to Implementation) idiom in C++ can significantly reduce build time. This reduction is achieved by minimizing compilation dependencies and isolating implementation details. See [this example](example/reduce_build_time).
 
+#### Network stack selection and observability
+`SessionOptions` now allows selecting the desired network stack while keeping the public request/subscription API unchanged:
+```
+SessionOptions sessionOptions;
+sessionOptions.networkStack = "DPDK"; // "ASIO" (default) or "DPDK"
+sessionOptions.enableNetworkMetrics = true;
+Session session(sessionOptions, SessionConfigs(), &eventHandler);
+```
+
+Current behavior:
+* `ASIO` uses the existing Boost.Asio/Beast path.
+* `DPDK` is treated as a kernel-bypass intent. If a DPDK backend is unavailable in the build/runtime, ccapi transparently falls back to `ASIO` and preserves API compatibility.
+
+You can pull network-layer metrics from `Session` for observability:
+```
+const auto metrics = session.getNetworkMetrics();
+for (const auto& kv : metrics) {
+  std::cout << kv.first << "=" << kv.second << std::endl;
+}
+```
+
+Exposed metrics include:
+* selected stack and DPDK fallback state (`activeNetworkStack`, `dpdkRequested`, `dpdkActive`, `dpdkFallbackCount`)
+* websocket traffic/connectivity (`wsBytesSent`, `wsBytesReceived`, `wsConnectCount`, `wsConnectFailureCount`)
+* HTTP traffic/reliability (`httpBytesSent`, `httpBytesReceived`, `httpRequestCount`, `httpRequestFailureCount`)
+
 ## Performance Tuning
 * Turn on compiler optimization flags (e.g. `cmake -DCMAKE_BUILD_TYPE=Release ...`).
 * Enable link time optimization (e.g. in CMakeLists.txt `set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)` before a target is created). Note that link time optimization is only applicable to static linking.
